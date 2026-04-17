@@ -1,0 +1,1553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0d10" />
+<title>Restoration — a Voronoi skybox puzzle</title>
+<style>
+  :root {
+    --bg: #0b0d10;
+    --bg-soft: #13161b;
+    --ink: #e7e3da;
+    --ink-dim: #8b8a86;
+    --accent: #c9b48a;
+    --fog: rgba(180, 190, 205, 0.06);
+    --desat: 1;
+    --seam: 0.22;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; width: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: ui-sans-serif, -apple-system, "SF Pro Text", "Inter", system-ui, sans-serif;
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+  #webgl {
+    position: fixed; inset: 0;
+    width: 100vw; height: 100vh;
+    display: block;
+    z-index: 1;
+  }
+  #tiles-layer {
+    position: fixed; inset: 0;
+    z-index: 3;
+    pointer-events: none;
+  }
+  .tile-card {
+    position: absolute;
+    pointer-events: auto;
+    user-select: none;
+    -webkit-user-drag: none;
+    transform-origin: center center;
+    will-change: transform, filter;
+    filter: grayscale(var(--desat)) brightness(0.92) contrast(0.95);
+    transition: filter 280ms ease, box-shadow 220ms ease;
+    cursor: grab;
+  }
+  .tile-card.dragging { cursor: grabbing; transition: none; }
+  .tile-card canvas { display: block; pointer-events: none; }
+  .rotate-handle {
+    position: absolute;
+    right: -14px; bottom: -14px;
+    width: 34px; height: 34px;
+    border-radius: 50%;
+    background: rgba(20, 22, 26, 0.88);
+    border: 1px solid rgba(231, 227, 218, 0.18);
+    color: var(--ink);
+    display: none;
+    align-items: center; justify-content: center;
+    font-size: 16px;
+    backdrop-filter: blur(6px);
+    cursor: pointer;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.45);
+  }
+  .tile-card.selected .rotate-handle { display: flex; }
+
+  /* Upload overlay */
+  #upload-overlay {
+    position: fixed; inset: 0;
+    z-index: 10;
+    background:
+      radial-gradient(1200px 900px at 50% 35%, rgba(40,50,65,0.55), rgba(11,13,16,0.95)),
+      var(--bg);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 32px;
+    text-align: center;
+    transition: opacity 700ms ease;
+  }
+  #upload-overlay h1 {
+    font-family: "Cormorant Garamond", "Iowan Old Style", Georgia, serif;
+    font-weight: 400;
+    font-size: clamp(28px, 6vw, 44px);
+    letter-spacing: 0.02em;
+    margin: 0 0 8px;
+    color: var(--ink);
+  }
+  #upload-overlay p {
+    max-width: 32ch;
+    color: var(--ink-dim);
+    font-size: 14px;
+    line-height: 1.55;
+    margin: 0 0 28px;
+  }
+  .btn {
+    appearance: none;
+    background: transparent;
+    color: var(--ink);
+    border: 1px solid rgba(231, 227, 218, 0.3);
+    padding: 12px 22px;
+    font-size: 14px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border-radius: 2px;
+    cursor: pointer;
+    transition: background 200ms ease, border-color 200ms ease;
+  }
+  .btn:hover, .btn:focus { background: rgba(231, 227, 218, 0.06); border-color: rgba(231, 227, 218, 0.5); outline: none; }
+  .btn.primary { background: var(--accent); color: #1a1814; border-color: var(--accent); }
+  .btn.primary:hover { background: #d8c29a; border-color: #d8c29a; }
+  .upload-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  #file-input { display: none; }
+
+  /* HUD */
+  #hud {
+    position: fixed; top: 0; left: 0; right: 0;
+    z-index: 4;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: max(14px, env(safe-area-inset-top, 0px)) 16px 8px;
+    pointer-events: none;
+  }
+  #stage-pill {
+    pointer-events: auto;
+    background: rgba(11, 13, 16, 0.5);
+    border: 1px solid rgba(231, 227, 218, 0.12);
+    color: var(--ink-dim);
+    padding: 6px 12px;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    border-radius: 20px;
+    backdrop-filter: blur(8px);
+  }
+  .icon-btn {
+    pointer-events: auto;
+    width: 38px; height: 38px;
+    border-radius: 50%;
+    border: 1px solid rgba(231, 227, 218, 0.12);
+    background: rgba(11, 13, 16, 0.5);
+    color: var(--ink);
+    display: inline-flex; align-items: center; justify-content: center;
+    margin-left: 8px;
+    cursor: pointer;
+    backdrop-filter: blur(8px);
+  }
+  .icon-btn:hover { border-color: rgba(231, 227, 218, 0.28); }
+  .icon-btn svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.4; }
+
+  /* Settings drawer */
+  #settings-drawer {
+    position: fixed; top: 0; bottom: 0; right: 0;
+    width: min(340px, 86vw);
+    z-index: 9;
+    background: rgba(13, 16, 21, 0.92);
+    backdrop-filter: blur(14px);
+    border-left: 1px solid rgba(231, 227, 218, 0.08);
+    transform: translateX(102%);
+    transition: transform 320ms cubic-bezier(0.22, 0.61, 0.36, 1);
+    padding: calc(env(safe-area-inset-top, 0px) + 20px) 20px 24px;
+    overflow-y: auto;
+  }
+  #settings-drawer.open { transform: translateX(0); }
+  #settings-drawer h3 {
+    font-family: "Cormorant Garamond", Georgia, serif;
+    font-weight: 400;
+    font-size: 22px;
+    margin: 0 0 4px;
+  }
+  #settings-drawer .caption {
+    color: var(--ink-dim);
+    font-size: 12px;
+    margin: 0 0 18px;
+  }
+  .setting {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 10px;
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(231, 227, 218, 0.06);
+  }
+  .setting label { font-size: 13px; color: var(--ink); }
+  .setting .val { font-size: 12px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+  .setting input[type=range] { grid-column: 1 / -1; width: 100%; accent-color: var(--accent); }
+  .setting .toggle { grid-column: 2; }
+  .setting .toggle input { accent-color: var(--accent); }
+  .settings-actions { display: flex; gap: 8px; margin-top: 16px; }
+  .settings-actions .btn { flex: 1; padding: 10px; font-size: 12px; }
+
+  /* Toast */
+  #toast {
+    position: fixed;
+    bottom: max(20px, env(safe-area-inset-bottom, 0px));
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    z-index: 8;
+    background: rgba(13, 16, 21, 0.86);
+    border: 1px solid rgba(231, 227, 218, 0.12);
+    padding: 10px 18px;
+    font-size: 13px;
+    color: var(--ink);
+    border-radius: 22px;
+    opacity: 0;
+    transition: opacity 260ms ease, transform 260ms ease;
+    pointer-events: none;
+    backdrop-filter: blur(8px);
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* Loader */
+  #loader {
+    position: fixed; inset: 0; z-index: 6;
+    background: rgba(11, 13, 16, 0.6);
+    display: none;
+    align-items: center; justify-content: center;
+    pointer-events: none;
+  }
+  #loader.show { display: flex; }
+  #loader .spinner {
+    width: 34px; height: 34px;
+    border: 2px solid rgba(231, 227, 218, 0.15);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 1.1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <canvas id="webgl"></canvas>
+  <div id="tiles-layer"></div>
+
+  <div id="hud">
+    <div id="stage-pill">STAGE 1 / 2</div>
+    <div>
+      <button class="icon-btn" id="reset-btn" title="Reset">
+        <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66" stroke-linecap="round"/><path d="M20 4v5h-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="icon-btn" id="settings-btn" title="Settings">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.64 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.64 9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 9 4.64 1.7 1.7 0 0 0 10.03 3.08V3a2 2 0 1 1 4 0v.09c0 .67.39 1.27 1.02 1.55a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.36 9c.28.63.88 1.02 1.55 1.02H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1.03z"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <aside id="settings-drawer" aria-hidden="true">
+    <h3>Controls</h3>
+    <p class="caption">Tune the prototype. Live where practical; rebuilds are labelled.</p>
+    <div id="settings-body"></div>
+    <div class="settings-actions">
+      <button class="btn" id="rebuild-btn">Rebuild</button>
+      <button class="btn" id="close-settings-btn">Close</button>
+    </div>
+  </aside>
+
+  <div id="upload-overlay">
+    <h1>Restoration</h1>
+    <p>Upload a Skybox AI scene and piece its fractured world back together. The image should be an equirectangular panorama (2:1).</p>
+    <div class="upload-row">
+      <label class="btn primary" for="file-input">Upload scene</label>
+      <button class="btn" id="demo-btn">Use demo scene</button>
+    </div>
+    <input id="file-input" type="file" accept="image/*" />
+  </div>
+
+  <div id="loader"><div class="spinner"></div></div>
+  <div id="toast"></div>
+
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.module.js';
+    import { geoVoronoi } from 'https://cdn.jsdelivr.net/npm/d3-geo-voronoi@2/+esm';
+
+    // ===== Settings =====
+    const SETTINGS = {
+      tileCount: 56,
+      snapPull: 90,
+      snapCommit: 34,
+      fogOpacity: 0.92,
+      zone1Size: 7,
+      zone2Size: 12,
+      desat: 1.0,
+      rotationEnabled: true,
+      rotationCount: 3,
+      seamOpacity: 0.22,
+      stagingRadius: 1.1,
+      debug: false,
+      sound: false,
+    };
+
+    // ===== Globals =====
+    let scene, camera, renderer;
+    let panoramaTexture = null;
+    let sphereGroup = null;
+    let cells = [];            // cell objects
+    let adjacency = [];        // cell index -> neighbour indices
+    const R = 500;
+    let cameraYaw = 0, cameraPitch = 0, cameraFov = 75;
+    let orbitActive = false, lastPointer = null;
+    let stage = 1;
+    const tilesLayer = document.getElementById('tiles-layer');
+
+    // ===== Utilities =====
+    // Equirectangular UV for a unit-sphere point. Negate X when used for
+    // inside-sphere view (see notes §2). V uses lat/pi + 0.5 (NOT 0.5 - lat/pi).
+    function s2uv(x, y, z) {
+      const u = Math.atan2(z, x) / (2 * Math.PI) + 0.5;
+      const v = Math.asin(Math.max(-1, Math.min(1, y))) / Math.PI + 0.5;
+      return [u, v];
+    }
+    // Per-triangle seam fix: if UVs span the 0/1 seam, shift the small ones up.
+    function seamFix(ua, ub, uc) {
+      const mx = Math.max(ua[0], ub[0], uc[0]);
+      const mn = Math.min(ua[0], ub[0], uc[0]);
+      if (mx - mn > 0.5) {
+        if (ua[0] < 0.5) ua[0] += 1;
+        if (ub[0] < 0.5) ub[0] += 1;
+        if (uc[0] < 0.5) uc[0] += 1;
+      }
+    }
+
+    // Fibonacci / golden-spiral points on the unit sphere. Offset so the
+    // endpoints don't sit exactly at the poles (which would yield degenerate
+    // Voronoi cells).
+    function fibonacciSphere(n) {
+      const pts = [];
+      const phi = Math.PI * (3 - Math.sqrt(5));
+      for (let i = 0; i < n; i++) {
+        const y = 1 - (2 * i + 1) / n;
+        const r = Math.sqrt(Math.max(0, 1 - y * y));
+        const th = phi * i;
+        pts.push([Math.cos(th) * r, y, Math.sin(th) * r]);
+      }
+      return pts;
+    }
+
+    // Convert unit-sphere 3D point to [lon, lat] in degrees for d3-geo-voronoi.
+    function xyz2lonlat(p) {
+      const lat = Math.asin(Math.max(-1, Math.min(1, p[1]))) * 180 / Math.PI;
+      const lon = Math.atan2(p[2], p[0]) * 180 / Math.PI;
+      return [lon, lat];
+    }
+    function lonlat2xyz(ll) {
+      const lon = ll[0] * Math.PI / 180;
+      const lat = ll[1] * Math.PI / 180;
+      const c = Math.cos(lat);
+      return [Math.cos(lon) * c, Math.sin(lat), Math.sin(lon) * c];
+    }
+
+    // Compute centroid of a spherical polygon from its boundary points
+    // (unit-sphere xyz). Simple average-and-normalise — good enough for Lloyd.
+    function polygonCentroidUnit(verts) {
+      let cx = 0, cy = 0, cz = 0;
+      for (const v of verts) { cx += v[0]; cy += v[1]; cz += v[2]; }
+      const n = verts.length || 1;
+      cx /= n; cy /= n; cz /= n;
+      const m = Math.hypot(cx, cy, cz) || 1;
+      return [cx / m, cy / m, cz / m];
+    }
+
+    // Build spherical Voronoi, apply k Lloyd relaxation iterations.
+    function buildSphericalVoronoi(generators, lloydIters) {
+      let gen = generators.slice();
+      for (let iter = 0; iter < lloydIters; iter++) {
+        const ll = gen.map(xyz2lonlat);
+        const v = geoVoronoi()(ll);
+        const polys = v.polygons().features;
+        gen = polys.map(f => {
+          const ring = f.geometry.coordinates[0];
+          // Drop the duplicated closing vertex.
+          const verts = ring.slice(0, -1).map(lonlat2xyz);
+          return polygonCentroidUnit(verts);
+        });
+      }
+      const ll = gen.map(xyz2lonlat);
+      const v = geoVoronoi()(ll);
+      const polys = v.polygons().features;
+      const cellsOut = [];
+      for (let i = 0; i < polys.length; i++) {
+        const ring = polys[i].geometry.coordinates[0].slice(0, -1);
+        let verts = ring.map(lonlat2xyz);
+        const centre = gen[i].slice();
+        // Sort verts by angle around the centre (CCW when viewed from outside).
+        verts = sortVertsAroundCentre(verts, centre);
+        cellsOut.push({ centre, verts });
+      }
+      // Adjacency from shared polygon vertices. Two cells share a Voronoi
+      // vertex iff they are adjacent (3 cells meet at every Voronoi vertex).
+      const adj = computeAdjacencyFromVerts(cellsOut);
+      return { cells: cellsOut, adjacency: adj };
+    }
+
+    function computeAdjacencyFromVerts(cellsOut) {
+      // Hash each boundary vertex to a quantised key; cells sharing a key
+      // are adjacent.
+      const keyOf = (p) => {
+        const k = 1e4;
+        return `${Math.round(p[0]*k)}_${Math.round(p[1]*k)}_${Math.round(p[2]*k)}`;
+      };
+      const vertToCells = new Map();
+      cellsOut.forEach((c, i) => {
+        for (const v of c.verts) {
+          const k = keyOf(v);
+          if (!vertToCells.has(k)) vertToCells.set(k, new Set());
+          vertToCells.get(k).add(i);
+        }
+      });
+      const adj = Array.from({ length: cellsOut.length }, () => new Set());
+      for (const set of vertToCells.values()) {
+        const arr = [...set];
+        for (let i = 0; i < arr.length; i++)
+          for (let j = i + 1; j < arr.length; j++) {
+            adj[arr[i]].add(arr[j]);
+            adj[arr[j]].add(arr[i]);
+          }
+      }
+      return adj.map(s => [...s]);
+    }
+
+    function sortVertsAroundCentre(verts, c) {
+      // Build a local basis at c, project each vert, sort by angle.
+      const up = Math.abs(c[1]) < 0.95 ? [0, 1, 0] : [0, 0, 1];
+      const ex = cross(up, c); normalize(ex);
+      const ey = cross(c, ex); normalize(ey);
+      return verts.slice().sort((a, b) => {
+        const ax = dot(a, ex), ay = dot(a, ey);
+        const bx = dot(b, ex), by = dot(b, ey);
+        return Math.atan2(ay, ax) - Math.atan2(by, bx);
+      });
+    }
+    function dot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+    function cross(a, b) { return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }
+    function normalize(v) { const m = Math.hypot(v[0],v[1],v[2]) || 1; v[0]/=m; v[1]/=m; v[2]/=m; return v; }
+
+    // Slerp on the unit sphere.
+    function slerpUnit(a, b, t) {
+      const d = Math.max(-1, Math.min(1, dot(a, b)));
+      const ang = Math.acos(d);
+      if (ang < 1e-6) return a.slice();
+      const s = Math.sin(ang);
+      const ka = Math.sin((1 - t) * ang) / s;
+      const kb = Math.sin(t * ang) / s;
+      return [a[0]*ka + b[0]*kb, a[1]*ka + b[1]*kb, a[2]*ka + b[2]*kb];
+    }
+
+    // Build a cell geometry via centre-fan triangulation with row subdivisions.
+    // Apply per-triangle seam fix on UVs. Returns a THREE.BufferGeometry.
+    function buildCellGeometry(cell, fanRows = 3) {
+      const R_ = R;
+      const positions = [];
+      const uvs = [];
+      const c = cell.centre;
+      const vs = cell.verts;
+      for (let i = 0; i < vs.length; i++) {
+        const a = vs[i];
+        const b = vs[(i + 1) % vs.length];
+        // For each fan slice, build a strip of small triangles from centre → edge.
+        // Parameterise (u along centre→edge, v along edge from a to b).
+        for (let r = 0; r < fanRows; r++) {
+          const t0 = r / fanRows;
+          const t1 = (r + 1) / fanRows;
+          // At each row, we have an arc from pA_t = slerp(c, a, t) to pB_t = slerp(c, b, t).
+          // Subdivide that arc into fanRows segments too.
+          const cols = Math.max(1, fanRows);
+          for (let k = 0; k < cols; k++) {
+            const s0 = k / cols, s1 = (k + 1) / cols;
+            const pAt0 = slerpUnit(c, a, t0);
+            const pBt0 = slerpUnit(c, b, t0);
+            const pAt1 = slerpUnit(c, a, t1);
+            const pBt1 = slerpUnit(c, b, t1);
+            const p00 = slerpUnit(pAt0, pBt0, s0);
+            const p10 = slerpUnit(pAt0, pBt0, s1);
+            const p01 = slerpUnit(pAt1, pBt1, s0);
+            const p11 = slerpUnit(pAt1, pBt1, s1);
+            pushTri(positions, uvs, R_, p00, p10, p11);
+            pushTri(positions, uvs, R_, p00, p11, p01);
+          }
+        }
+      }
+      const geom = new THREE.BufferGeometry();
+      geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      geom.computeVertexNormals();
+      return geom;
+    }
+    function pushTri(positions, uvs, R_, pa, pb, pc) {
+      // Negate X for inside-sphere sampling.
+      const ua = s2uv(-pa[0], pa[1], pa[2]);
+      const ub = s2uv(-pb[0], pb[1], pb[2]);
+      const uc = s2uv(-pc[0], pc[1], pc[2]);
+      seamFix(ua, ub, uc);
+      positions.push(pa[0]*R_, pa[1]*R_, pa[2]*R_);
+      positions.push(pb[0]*R_, pb[1]*R_, pb[2]*R_);
+      positions.push(pc[0]*R_, pc[1]*R_, pc[2]*R_);
+      uvs.push(ua[0], ua[1], ub[0], ub[1], uc[0], uc[1]);
+    }
+
+    // ===== Boot =====
+    function initScene() {
+      const canvas = document.getElementById('webgl');
+      renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setSize(window.innerWidth, window.innerHeight, false);
+      renderer.setClearColor(0x0b0d10, 1);
+
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(cameraFov, window.innerWidth / window.innerHeight, 0.1, 1100);
+      camera.position.set(0, 0, 0);
+
+      sphereGroup = new THREE.Group();
+      scene.add(sphereGroup);
+
+      window.addEventListener('resize', onResize);
+      requestAnimationFrame(tick);
+    }
+
+    function onResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight, false);
+      relaxStagingPositions();
+    }
+
+    let lastT = performance.now();
+    function tick(now) {
+      const dt = Math.min(0.05, (now - lastT) / 1000);
+      lastT = now;
+      updateCamera(dt);
+      updateTiles(now / 1000, dt);
+      renderer.render(scene, camera);
+      requestAnimationFrame(tick);
+    }
+
+    function updateCamera(dt) {
+      camera.rotation.order = 'YXZ';
+      camera.rotation.y = cameraYaw;
+      camera.rotation.x = cameraPitch;
+    }
+
+    function updateTiles(t, dt) {
+      const W = window.innerWidth, H = window.innerHeight;
+      for (const cell of cells) {
+        if (cell.state !== 'loose' || !cell.cardEl) continue;
+        if (cell.dragging) continue;
+        if (cell.snapping) continue;
+        const s = cell.staging;
+        let x = s.x + Math.sin(t * s.freqX * Math.PI * 2 + s.phaseX) * s.ampX;
+        let y = s.y + Math.sin(t * s.freqY * Math.PI * 2 + s.phaseY) * s.ampY;
+        // Magnetic pull if pointer isn't active and user has orbited near target:
+        // actually, pull only happens while dragging — handled in pointermove.
+        positionCard(cell, x, y);
+      }
+    }
+
+    function relaxStagingPositions() {
+      // Re-assign staging ring on resize.
+      const loose = cells.filter(c => c.state === 'loose');
+      if (loose.length) assignStagingPositions(loose);
+    }
+
+    // Project a cell's centre to screen pixels via the MAIN camera (§7).
+    function projectCellToScreen(cell) {
+      const v = new THREE.Vector3(cell.centre[0] * R, cell.centre[1] * R, cell.centre[2] * R);
+      v.project(camera);
+      const onScreen = v.z < 1;
+      const x = (v.x + 1) / 2 * window.innerWidth;
+      const y = (-v.y + 1) / 2 * window.innerHeight;
+      return { x, y, onScreen };
+    }
+
+    // ===== Drag + snap =====
+    let dragState = null;
+    let selectedCell = null;
+
+    tilesLayer.addEventListener('pointerdown', (e) => {
+      const card = e.target.closest('.tile-card');
+      if (!card) return;
+      if (e.target.closest('.rotate-handle')) return; // rotation handled by button
+      const cell = cells.find(c => c.cardEl === card);
+      if (!cell || cell.state !== 'loose' || cell.snapping) return;
+      card.setPointerCapture(e.pointerId);
+      card.classList.add('dragging');
+      // Select this cell (show rotate handle on zone-2 rotatable tiles).
+      if (selectedCell && selectedCell.cardEl) selectedCell.cardEl.classList.remove('selected');
+      selectedCell = cell;
+      if (cell.canRotate) card.classList.add('selected');
+      cell.dragging = true;
+      const rect = card.getBoundingClientRect();
+      dragState = {
+        pointerId: e.pointerId,
+        cell,
+        offsetX: e.clientX - (rect.left + rect.width / 2),
+        offsetY: e.clientY - (rect.top + rect.height / 2),
+        startX: cell.staging.x,
+        startY: cell.staging.y,
+      };
+      card.style.filter = 'grayscale(var(--desat)) brightness(1.02) contrast(1.02) drop-shadow(0 10px 26px rgba(0,0,0,0.55))';
+      positionCardAt(cell, e.clientX - dragState.offsetX, e.clientY - dragState.offsetY, 1.04);
+    });
+
+    tilesLayer.addEventListener('pointermove', (e) => {
+      if (!dragState || e.pointerId !== dragState.pointerId) return;
+      const cell = dragState.cell;
+      let x = e.clientX - dragState.offsetX;
+      let y = e.clientY - dragState.offsetY;
+      // Magnetic pull to target when within snapPull.
+      const target = projectCellToScreen(cell);
+      if (target.onScreen) {
+        const dx = target.x - x, dy = target.y - y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < SETTINGS.snapPull) {
+          const k = 1 - Math.min(1, dist / SETTINGS.snapPull);
+          x += dx * k * 0.35;
+          y += dy * k * 0.35;
+        }
+      }
+      positionCardAt(cell, x, y, 1.04);
+    });
+
+    tilesLayer.addEventListener('pointerup', (e) => {
+      if (!dragState || e.pointerId !== dragState.pointerId) return;
+      const cell = dragState.cell;
+      const card = cell.cardEl;
+      try { card.releasePointerCapture(dragState.pointerId); } catch {}
+      card.classList.remove('dragging');
+      cell.dragging = false;
+      const rect = card.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const target = projectCellToScreen(cell);
+      const rotationOk = (cell.rotation % 360) === 0;
+      const within = target.onScreen && Math.hypot(target.x - cx, target.y - cy) < SETTINGS.snapCommit;
+      if (within && rotationOk) {
+        snapIntoPlace(cell, target);
+      } else {
+        // Drift back to staging position.
+        floatBack(cell);
+      }
+      dragState = null;
+    });
+
+    tilesLayer.addEventListener('pointercancel', (e) => {
+      if (!dragState) return;
+      const cell = dragState.cell;
+      cell.dragging = false;
+      if (cell.cardEl) cell.cardEl.classList.remove('dragging');
+      floatBack(cell);
+      dragState = null;
+    });
+
+    function positionCardAt(cell, x, y, scale = 1) {
+      if (!cell.cardEl) return;
+      const w = cell.cropped.canvas.width, h = cell.cropped.canvas.height;
+      cell.cardEl.style.transform = `translate(${x - w/2}px, ${y - h/2}px) rotate(${cell.rotation}deg) scale(${scale})`;
+    }
+
+    function floatBack(cell) {
+      // Simple lerp-home animation.
+      if (!cell.cardEl) return;
+      const start = performance.now();
+      const rect = cell.cardEl.getBoundingClientRect();
+      const fromX = rect.left + rect.width / 2;
+      const fromY = rect.top + rect.height / 2;
+      const toX = cell.staging.x, toY = cell.staging.y;
+      const dur = 320;
+      function step(now) {
+        const t = Math.min(1, (now - start) / dur);
+        const e = easeOutCubic(t);
+        const x = fromX + (toX - fromX) * e;
+        const y = fromY + (toY - fromY) * e;
+        positionCardAt(cell, x, y, 1 + (1 - e) * 0.04);
+        if (t < 1) requestAnimationFrame(step);
+        else cell.cardEl.style.filter = 'grayscale(var(--desat)) brightness(0.92) contrast(0.95)';
+      }
+      requestAnimationFrame(step);
+    }
+
+    function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+    function easeInOutCubic(t) { return t < 0.5 ? 4*t*t*t : 1 - Math.pow(-2*t+2, 3)/2; }
+
+    function snapIntoPlace(cell, target) {
+      cell.snapping = true;
+      const start = performance.now();
+      const rect = cell.cardEl.getBoundingClientRect();
+      const fromX = rect.left + rect.width / 2;
+      const fromY = rect.top + rect.height / 2;
+      const dur = 300;
+      // Immediately begin desaturation fade on the card, even as it moves.
+      function step(now) {
+        const t = Math.min(1, (now - start) / dur);
+        const e = easeOutCubic(t);
+        const tgt = projectCellToScreen(cell);
+        const tx = tgt.onScreen ? tgt.x : target.x;
+        const ty = tgt.onScreen ? tgt.y : target.y;
+        const x = fromX + (tx - fromX) * e;
+        const y = fromY + (ty - fromY) * e;
+        cell.cardEl.style.filter = `grayscale(${(1 - e).toFixed(3)}) brightness(${(0.92 + 0.08 * e).toFixed(3)}) contrast(${(0.95 + 0.05 * e).toFixed(3)})`;
+        positionCardAt(cell, x, y, 1 + (1 - e) * 0.04);
+        if (t < 1) requestAnimationFrame(step);
+        else finalizeSnap(cell);
+      }
+      requestAnimationFrame(step);
+      if (navigator.vibrate) navigator.vibrate(10);
+      if (SETTINGS.sound) playClick();
+    }
+
+    function finalizeSnap(cell) {
+      // Reveal the cell on the sphere + hide the card.
+      cell.mesh.material = cell.sceneMat;
+      cell.state = 'placed';
+      if (cell.cardEl && cell.cardEl.parentNode) cell.cardEl.parentNode.removeChild(cell.cardEl);
+      cell.cardEl = null;
+      cell.snapping = false;
+      // Briefly animate a soft glow on the placed cell.
+      spawnPlaceGlow(cell);
+      checkZoneComplete();
+    }
+
+    function spawnPlaceGlow(cell) {
+      const dot = document.createElement('div');
+      const { x, y, onScreen } = projectCellToScreen(cell);
+      if (!onScreen) return;
+      dot.style.position = 'absolute';
+      dot.style.left = (x - 30) + 'px';
+      dot.style.top = (y - 30) + 'px';
+      dot.style.width = '60px';
+      dot.style.height = '60px';
+      dot.style.borderRadius = '50%';
+      dot.style.background = 'radial-gradient(circle, rgba(231,227,218,0.35), rgba(231,227,218,0) 70%)';
+      dot.style.pointerEvents = 'none';
+      dot.style.transition = 'opacity 600ms ease, transform 600ms ease';
+      dot.style.opacity = '1';
+      tilesLayer.appendChild(dot);
+      requestAnimationFrame(() => {
+        dot.style.opacity = '0';
+        dot.style.transform = 'scale(1.6)';
+      });
+      setTimeout(() => dot.remove(), 700);
+    }
+
+    // ===== Audio (optional) =====
+    let audioCtx = null;
+    function playClick() {
+      try {
+        audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+        const o = audioCtx.createOscillator();
+        const g = audioCtx.createGain();
+        o.frequency.value = 820;
+        o.type = 'triangle';
+        g.gain.value = 0.0001;
+        g.gain.linearRampToValueAtTime(0.08, audioCtx.currentTime + 0.005);
+        g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + 0.18);
+        o.connect(g); g.connect(audioCtx.destination);
+        o.start();
+        o.stop(audioCtx.currentTime + 0.2);
+      } catch {}
+    }
+
+    // ===== Zone completion / reveal =====
+    function checkZoneComplete() {
+      if (stage === 1) {
+        const done = cells.filter(c => c.zone === 1).every(c => c.state === 'placed');
+        if (done) beginStage2();
+      } else if (stage === 2) {
+        const done = cells.filter(c => c.zone === 2).every(c => c.state === 'placed');
+        if (done) {
+          toast('Scene restored.', 3400);
+          document.getElementById('stage-pill').textContent = 'COMPLETE';
+        }
+      }
+    }
+
+    function beginStage2() {
+      stage = 2;
+      document.getElementById('stage-pill').textContent = 'STAGE 2 / 2';
+      toast('Zone 1 restored.', 2400);
+
+      // Fog retreat on zone 2 cells: animate opacity to a hint state, then
+      // mark as slot + spawn loose cards.
+      const zone2 = cells.filter(c => c.zone === 2);
+      const dur = 900;
+      const start = performance.now();
+      function step(now) {
+        const t = Math.min(1, (now - start) / dur);
+        const e = easeInOutCubic(t);
+        for (const c of zone2) {
+          if (c.mesh.material && c.mesh.material.uniforms) {
+            c.mesh.material.uniforms.uOpacity.value = SETTINGS.fogOpacity * (1 - e) + 0.55 * e;
+            c.mesh.material.uniforms.uMix.value = e * 0.08;
+          }
+        }
+        if (t < 1) requestAnimationFrame(step);
+        else onStage2Ready();
+      }
+      requestAnimationFrame(step);
+
+      function onStage2Ready() {
+        for (const c of zone2) {
+          c.state = 'loose';
+          const thin = makeFogMaterial({ opacity: 0.55, tint: [0.38, 0.40, 0.44], showHint: true });
+          c.mesh.material = thin;
+          c.fogMat = thin;
+        }
+        // Random rotation on some zone 2 cells.
+        if (SETTINGS.rotationEnabled) {
+          const pool = zone2.slice();
+          shuffle(pool);
+          const rotateCount = Math.min(SETTINGS.rotationCount, pool.length);
+          for (let i = 0; i < rotateCount; i++) {
+            pool[i].rotation = 90 * (1 + Math.floor(Math.random() * 3));
+            pool[i].canRotate = true;
+          }
+        }
+        assignStagingPositions(zone2);
+        for (const c of zone2) createTileCard(c);
+      }
+    }
+
+    function shuffle(a) {
+      for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+      }
+    }
+
+    // ===== Upload flow =====
+    const uploadOverlay = document.getElementById('upload-overlay');
+    const fileInput = document.getElementById('file-input');
+    const demoBtn = document.getElementById('demo-btn');
+
+    fileInput.addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      const reader = new FileReader();
+      reader.onload = () => loadSceneFromURL(reader.result);
+      reader.readAsDataURL(f);
+    });
+    demoBtn.addEventListener('click', () => {
+      loadSceneFromCanvas(makeDemoPanorama());
+    });
+
+    function loadSceneFromURL(url) {
+      showLoader(true);
+      const loader = new THREE.TextureLoader();
+      loader.crossOrigin = 'anonymous';
+      loader.load(url, (tex) => finishTextureLoad(tex), undefined, (err) => {
+        console.error(err);
+        toast('Could not load that image. Try another.');
+        showLoader(false);
+      });
+    }
+    function loadSceneFromCanvas(canvas) {
+      const tex = new THREE.CanvasTexture(canvas);
+      finishTextureLoad(tex);
+    }
+    function finishTextureLoad(tex) {
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.needsUpdate = true;
+      panoramaTexture = tex;
+      dismissOverlay();
+      buildPuzzle();
+    }
+    function dismissOverlay() {
+      uploadOverlay.style.opacity = '0';
+      setTimeout(() => { uploadOverlay.style.display = 'none'; }, 700);
+    }
+
+    function makeDemoPanorama() {
+      // Procedural equirectangular fallback — gentle horizon with hills.
+      const w = 2048, h = 1024;
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      // Sky gradient
+      const g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, '#1b2638');
+      g.addColorStop(0.45, '#4a5b74');
+      g.addColorStop(0.55, '#c9a079');
+      g.addColorStop(0.62, '#7a6a58');
+      g.addColorStop(1, '#20241f');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+      // A faint sun
+      const sunX = w * 0.33, sunY = h * 0.5;
+      const sg = ctx.createRadialGradient(sunX, sunY, 10, sunX, sunY, 220);
+      sg.addColorStop(0, 'rgba(255,235,200,0.95)');
+      sg.addColorStop(1, 'rgba(255,235,200,0)');
+      ctx.fillStyle = sg; ctx.fillRect(0, 0, w, h);
+      // Hills (a few overlapping sine ridges)
+      for (let layer = 0; layer < 4; layer++) {
+        ctx.beginPath();
+        const base = h * (0.58 + layer * 0.08);
+        ctx.moveTo(0, base);
+        for (let x = 0; x <= w; x += 8) {
+          const y = base + Math.sin(x * 0.007 + layer * 1.7) * (22 - layer * 4)
+                        + Math.sin(x * 0.021 + layer * 3.1) * (12 - layer * 2);
+          ctx.lineTo(x, y);
+        }
+        ctx.lineTo(w, h); ctx.lineTo(0, h); ctx.closePath();
+        const alpha = 0.18 + layer * 0.12;
+        ctx.fillStyle = `rgba(12,14,20,${alpha})`;
+        ctx.fill();
+      }
+      // Stars in the sky band
+      for (let i = 0; i < 260; i++) {
+        const x = Math.random() * w;
+        const y = Math.random() * h * 0.42;
+        const a = 0.25 + Math.random() * 0.55;
+        ctx.fillStyle = `rgba(240,235,220,${a})`;
+        ctx.fillRect(x, y, 1 + Math.random() * 0.8, 1 + Math.random() * 0.8);
+      }
+      return c;
+    }
+
+    function showLoader(on) {
+      document.getElementById('loader').classList.toggle('show', !!on);
+    }
+    function toast(msg, ms = 2200) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      clearTimeout(toast._h);
+      toast._h = setTimeout(() => t.classList.remove('show'), ms);
+    }
+
+    // ===== Puzzle build =====
+    function buildPuzzle() {
+      // Clear previous scene graph + loose tiles.
+      while (sphereGroup.children.length) {
+        const c = sphereGroup.children[0];
+        sphereGroup.remove(c);
+        if (c.geometry) c.geometry.dispose();
+        if (c.material) disposeMaterial(c.material);
+      }
+      clearLooseTiles();
+
+      // 1) Generators + relaxation.
+      const n = SETTINGS.tileCount;
+      const gens = fibonacciSphere(n);
+      const { cells: rawCells, adjacency: adj } = buildSphericalVoronoi(gens, 2);
+      adjacency = adj;
+
+      // 2) Build cells.
+      cells = rawCells.map((c, i) => {
+        const geom = buildCellGeometry(c, 3);
+        const sceneMat = new THREE.MeshBasicMaterial({
+          map: panoramaTexture, side: THREE.BackSide, toneMapped: false
+        });
+        const fogMat = makeFogMaterial();
+        const mesh = new THREE.Mesh(geom, fogMat);
+        mesh.userData.index = i;
+        sphereGroup.add(mesh);
+        return {
+          index: i,
+          centre: c.centre,
+          verts: c.verts,
+          geom,
+          mesh,
+          sceneMat,
+          fogMat,
+          state: 'hidden',   // 'anchor' | 'slot' | 'loose' | 'placed' | 'hidden'
+          zone: -1,
+          rotation: 0,       // 0, 90, 180, 270 (for loose cards)
+          interest: 0,
+          card: null,
+          staging: null,     // { x, y, phaseX, phaseY, ampX, ampY, freqX, freqY }
+          dragging: false,
+        };
+      });
+
+      // 3) Cell outlines (optional debug / seam lines).
+      addSeamLines();
+
+      // 4) Proceed to later milestones.
+      onPartitionReady();
+    }
+
+    function disposeMaterial(m) {
+      if (Array.isArray(m)) m.forEach(disposeMaterial);
+      else if (m) m.dispose();
+    }
+
+    function makeFogMaterial(opts = {}) {
+      // Soft, slightly translucent greyscale fog that hints at depth without
+      // revealing the panorama beneath. Uses a ShaderMaterial for a subtle
+      // noise pattern + a soft tint.
+      const opacity = opts.opacity !== undefined ? opts.opacity : SETTINGS.fogOpacity;
+      const tint = opts.tint || [0.32, 0.34, 0.38];
+      return new THREE.ShaderMaterial({
+        transparent: true,
+        side: THREE.BackSide,
+        depthWrite: false,
+        uniforms: {
+          uTint: { value: new THREE.Vector3(...tint) },
+          uOpacity: { value: opacity },
+          uTime: { value: 0 },
+          uMap: { value: panoramaTexture },
+          uMix: { value: opts.showHint ? 0.08 : 0.0 },
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          varying vec3 vNormal;
+          void main() {
+            vUv = uv;
+            vNormal = normalize(normalMatrix * normal);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          precision highp float;
+          varying vec2 vUv;
+          varying vec3 vNormal;
+          uniform vec3 uTint;
+          uniform float uOpacity;
+          uniform float uTime;
+          uniform float uMix;
+          uniform sampler2D uMap;
+          float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+          float noise(vec2 p){
+            vec2 i = floor(p); vec2 f = fract(p);
+            float a = hash(i), b = hash(i + vec2(1.0, 0.0));
+            float c = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));
+            vec2 u = f * f * (3.0 - 2.0 * f);
+            return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+          }
+          void main() {
+            float n = noise(vUv * 12.0) * 0.5 + 0.5 * noise(vUv * 48.0);
+            vec3 tint = uTint * (0.85 + 0.3 * n);
+            vec4 panel = texture2D(uMap, vUv);
+            // Desaturate the panel ghost.
+            float g = dot(panel.rgb, vec3(0.299, 0.587, 0.114));
+            vec3 ghost = mix(vec3(g), panel.rgb, 0.08) * 0.7;
+            vec3 col = mix(tint, ghost, uMix);
+            gl_FragColor = vec4(col, uOpacity);
+          }
+        `,
+      });
+    }
+
+    function addSeamLines() {
+      // Draw each cell's boundary as a thin line loop on the sphere.
+      const group = new THREE.Group();
+      group.name = 'seams';
+      for (const cell of cells) {
+        const pts = [];
+        for (let i = 0; i <= cell.verts.length; i++) {
+          const v = cell.verts[i % cell.verts.length];
+          pts.push(new THREE.Vector3(v[0] * R * 1.001, v[1] * R * 1.001, v[2] * R * 1.001));
+        }
+        const geom = new THREE.BufferGeometry().setFromPoints(pts);
+        const mat = new THREE.LineBasicMaterial({
+          color: 0xe7e3da,
+          transparent: true,
+          opacity: SETTINGS.seamOpacity,
+          depthWrite: false,
+        });
+        const line = new THREE.Line(geom, mat);
+        line.renderOrder = 2;
+        group.add(line);
+      }
+      sphereGroup.add(group);
+    }
+
+    function setSeamOpacity(v) {
+      const group = sphereGroup.getObjectByName('seams');
+      if (!group) return;
+      group.traverse(o => { if (o.material) o.material.opacity = v; });
+    }
+
+    // Stubs for subsequent milestones.
+    function clearLooseTiles() {
+      while (tilesLayer.firstChild) tilesLayer.removeChild(tilesLayer.firstChild);
+    }
+
+    // ===== Preview pipeline (render-to-texture + clip-path) =====
+    const PREVIEW_SIZE = 256;
+    let previewTarget = null;
+    let previewCam = null;
+
+    function renderAllPreviews() {
+      if (!previewTarget) {
+        previewTarget = new THREE.WebGLRenderTarget(PREVIEW_SIZE, PREVIEW_SIZE, {
+          minFilter: THREE.LinearFilter,
+          magFilter: THREE.LinearFilter,
+          format: THREE.RGBAFormat,
+          type: THREE.UnsignedByteType,
+        });
+      }
+      if (!previewCam) {
+        previewCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, R * 4);
+      }
+      // Hide seam lines during previews (pure tile content).
+      const seams = sphereGroup.getObjectByName('seams');
+      const seamsWasVisible = seams ? seams.visible : false;
+      if (seams) seams.visible = false;
+
+      // Snapshot mesh visibilities + materials.
+      const snapshot = cells.map(c => ({ visible: c.mesh.visible, material: c.mesh.material }));
+      // Hide all, then render each target.
+      cells.forEach(c => c.mesh.visible = false);
+
+      for (const cell of cells) {
+        cell.mesh.visible = true;
+        cell.mesh.material = cell.sceneMat;
+        cell.card = makePreviewCanvas(cell);
+        cell.mesh.visible = false;
+      }
+
+      // Restore.
+      cells.forEach((c, i) => {
+        c.mesh.visible = snapshot[i].visible;
+        c.mesh.material = snapshot[i].material;
+      });
+      if (seams) seams.visible = seamsWasVisible;
+
+      // Restore the main render target.
+      renderer.setRenderTarget(null);
+    }
+
+    function makePreviewCanvas(cell) {
+      // 1) Aim the orthographic camera at cell.centre. Pole guard for up.
+      const f = cell.centre;
+      const fy = f[1];
+      previewCam.up.set(0, 1, 0);
+      if (Math.abs(fy) > 0.95) previewCam.up.set(0, 0, 1);
+      previewCam.position.set(0, 0, 0);
+      previewCam.lookAt(f[0] * R, f[1] * R, f[2] * R);
+      previewCam.updateMatrixWorld(true);
+
+      // 2) Fit the frustum to the cell's vertex footprint in camera space.
+      let half = 1;
+      const inv = previewCam.matrixWorldInverse;
+      for (const v of cell.verts) {
+        const p = new THREE.Vector3(v[0] * R, v[1] * R, v[2] * R).applyMatrix4(inv);
+        const m = Math.max(Math.abs(p.x), Math.abs(p.y));
+        if (m > half) half = m;
+      }
+      half *= 1.06;
+      half = Math.max(half, 4); // guard against degenerate cells (§8)
+      previewCam.left = -half;
+      previewCam.right = half;
+      previewCam.top = half;
+      previewCam.bottom = -half;
+      previewCam.near = 0.1;
+      previewCam.far = R * 4;
+      previewCam.updateProjectionMatrix();
+
+      // 3) Render into the target.
+      renderer.setRenderTarget(previewTarget);
+      renderer.setClearColor(0x000000, 0);
+      renderer.clear(true, true, true);
+      renderer.render(scene, previewCam);
+
+      // 4) Read pixels.
+      const px = new Uint8Array(PREVIEW_SIZE * PREVIEW_SIZE * 4);
+      renderer.readRenderTargetPixels(previewTarget, 0, 0, PREVIEW_SIZE, PREVIEW_SIZE, px);
+
+      // 5) Draw into a 2D canvas, flipping Y (pixels come back bottom-to-top §9).
+      const canvas = document.createElement('canvas');
+      canvas.width = PREVIEW_SIZE;
+      canvas.height = PREVIEW_SIZE;
+      const ctx = canvas.getContext('2d');
+      const img = ctx.createImageData(PREVIEW_SIZE, PREVIEW_SIZE);
+      for (let y = 0; y < PREVIEW_SIZE; y++) {
+        const srcRow = PREVIEW_SIZE - 1 - y;
+        for (let x = 0; x < PREVIEW_SIZE; x++) {
+          const s = (srcRow * PREVIEW_SIZE + x) * 4;
+          const d = (y * PREVIEW_SIZE + x) * 4;
+          img.data[d]   = px[s];
+          img.data[d+1] = px[s+1];
+          img.data[d+2] = px[s+2];
+          img.data[d+3] = px[s+3];
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+
+      // 6) Clip to the projected polygon. Project the actual mesh vertex
+      // positions (no X negation here — negation in s2uv is a UV-sampling
+      // convention, not a world-position one). 1 - p.y matches the Y-flip
+      // of readRenderTargetPixels (§9).
+      const clipPts = cell.verts.map(v => {
+        const p = new THREE.Vector3(v[0] * R, v[1] * R, v[2] * R).project(previewCam);
+        return [(p.x + 1) / 2 * PREVIEW_SIZE, (1 - p.y) / 2 * PREVIEW_SIZE];
+      });
+      // Masking: redraw onto a fresh canvas using a clip path.
+      const out = document.createElement('canvas');
+      out.width = PREVIEW_SIZE;
+      out.height = PREVIEW_SIZE;
+      const octx = out.getContext('2d');
+      octx.save();
+      octx.beginPath();
+      octx.moveTo(clipPts[0][0], clipPts[0][1]);
+      for (let i = 1; i < clipPts.length; i++) octx.lineTo(clipPts[i][0], clipPts[i][1]);
+      octx.closePath();
+      octx.clip();
+      octx.drawImage(canvas, 0, 0);
+      // Subtle inner seam at the polygon edge.
+      octx.lineWidth = 1.1;
+      octx.strokeStyle = 'rgba(12,14,18,0.55)';
+      octx.stroke();
+      octx.restore();
+
+      return { canvas: out, clipPts };
+    }
+
+    // Compute the tight bounding box (in preview pixel space) of the clip
+    // path — used to crop the preview when placing it as a floating card.
+    function clipBounds(clipPts) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of clipPts) {
+        if (p[0] < minX) minX = p[0];
+        if (p[1] < minY) minY = p[1];
+        if (p[0] > maxX) maxX = p[0];
+        if (p[1] > maxY) maxY = p[1];
+      }
+      return { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+    }
+
+    function croppedTileCanvas(preview) {
+      // Returns a canvas trimmed to the clip bounds, with the clip shape
+      // recentred at (0,0). Used for the floating card.
+      const b = clipBounds(preview.clipPts);
+      const pad = 3;
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.ceil(b.w + pad * 2));
+      c.height = Math.max(1, Math.ceil(b.h + pad * 2));
+      const ctx = c.getContext('2d');
+      ctx.drawImage(preview.canvas, -b.x + pad, -b.y + pad);
+      return { canvas: c, offsetX: b.x - pad, offsetY: b.y - pad };
+    }
+
+    function onPartitionReady() {
+      renderAllPreviews();
+      scoreInterest();
+      assignZones();
+      applyInitialCellStates();
+      aimCameraAtAnchor();
+      spawnLooseTiles();
+    }
+
+    // ===== Content interest (Sobel on preview) =====
+    function scoreInterest() {
+      const S = 64;
+      const tmp = document.createElement('canvas');
+      tmp.width = S; tmp.height = S;
+      const tctx = tmp.getContext('2d');
+      for (const cell of cells) {
+        if (!cell.card) { cell.interest = 0; continue; }
+        tctx.clearRect(0, 0, S, S);
+        tctx.drawImage(cell.card.canvas, 0, 0, S, S);
+        const data = tctx.getImageData(0, 0, S, S).data;
+        // Greyscale
+        const g = new Float32Array(S * S);
+        for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+          const a = data[i + 3] / 255;
+          g[j] = (0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2]) * a;
+        }
+        // Sobel
+        let sum = 0, count = 0;
+        for (let y = 1; y < S - 1; y++) {
+          for (let x = 1; x < S - 1; x++) {
+            const idx = y * S + x;
+            const aa = data[idx * 4 + 3];
+            if (aa === 0) continue;
+            const gx = -g[idx - S - 1] - 2*g[idx - 1] - g[idx + S - 1]
+                      + g[idx - S + 1] + 2*g[idx + 1] + g[idx + S + 1];
+            const gy = -g[idx - S - 1] - 2*g[idx - S] - g[idx - S + 1]
+                      + g[idx + S - 1] + 2*g[idx + S] + g[idx + S + 1];
+            sum += Math.hypot(gx, gy);
+            count++;
+          }
+        }
+        cell.interest = count > 0 ? sum / count : 0;
+      }
+    }
+
+    // ===== Zone assignment =====
+    function assignZones() {
+      const z1n = SETTINGS.zone1Size;
+      const z2n = SETTINGS.zone2Size;
+
+      // Default view direction: look towards -Z (into the scene).
+      const viewDir = [0, 0, -1];
+      // Seed candidates: cells within 60° of viewDir, sorted by interest desc.
+      const cosLim = Math.cos(60 * Math.PI / 180);
+      const seedCandidates = cells
+        .map(c => ({ c, cos: dot(c.centre, viewDir), s: c.interest }))
+        .filter(o => o.cos > cosLim);
+      // Fallback: if no cells fall within the cone, use all cells.
+      const seedPool = seedCandidates.length ? seedCandidates : cells.map(c => ({ c, s: c.interest, cos: dot(c.centre, viewDir) }));
+      seedPool.sort((a, b) => b.s - a.s);
+      const anchor = seedPool[0].c;
+
+      // Grow zone 1 by BFS, preferring high-interest neighbours.
+      const zone1 = growZone([anchor.index], z1n);
+      // Grow zone 2 from the frontier.
+      const zone2 = growZone(zone1.slice(), z1n + z2n, zone1);
+
+      // Mark cells.
+      for (const c of cells) { c.zone = -1; }
+      for (const idx of zone1) cells[idx].zone = 1;
+      for (const idx of zone2) if (cells[idx].zone < 0) cells[idx].zone = 2;
+      anchor.zone = 1;
+      anchor.isAnchor = true;
+    }
+
+    function growZone(initialSet, target, excludeSet) {
+      const zone = new Set(initialSet);
+      const exclude = new Set(excludeSet || []);
+      while (zone.size < target) {
+        // Collect frontier (neighbours not in zone nor excluded).
+        const candidates = [];
+        for (const i of zone) {
+          for (const j of adjacency[i]) {
+            if (!zone.has(j) && !exclude.has(j)) candidates.push(j);
+          }
+        }
+        if (!candidates.length) break;
+        // Pick the candidate with highest interest (dedupe by max).
+        const best = new Map();
+        for (const j of candidates) {
+          if (!best.has(j)) best.set(j, cells[j].interest);
+        }
+        const pick = [...best.entries()].sort((a, b) => b[1] - a[1])[0][0];
+        zone.add(pick);
+      }
+      return [...zone];
+    }
+
+    function applyInitialCellStates() {
+      for (const cell of cells) {
+        if (cell.isAnchor) {
+          cell.state = 'placed';
+          cell.mesh.material = cell.sceneMat;
+        } else if (cell.zone === 1) {
+          cell.state = 'slot';
+          cell.mesh.material = makeFogMaterial({ opacity: 0.55, tint: [0.38, 0.40, 0.44], showHint: true });
+          cell.fogMat = cell.mesh.material;
+        } else {
+          cell.state = 'hidden';
+          cell.mesh.material = cell.fogMat; // full fog
+        }
+      }
+    }
+
+    function aimCameraAtAnchor() {
+      const anchor = cells.find(c => c.isAnchor);
+      if (!anchor) return;
+      const c = anchor.centre;
+      // Camera at origin needs its local -Z to point at world (cx,cy,cz).
+      // With Euler YXZ: forward = (-cos(p)*sin(y), sin(p), -cos(p)*cos(y)).
+      cameraPitch = Math.asin(Math.max(-1, Math.min(1, c[1])));
+      cameraYaw   = Math.atan2(-c[0], -c[2]);
+    }
+
+    // ===== Loose tiles =====
+    function spawnLooseTiles() {
+      const loose = cells.filter(c => c.zone === 1 && !c.isAnchor);
+      for (const c of loose) c.state = 'loose';
+      assignStagingPositions(loose);
+      for (const c of loose) createTileCard(c);
+    }
+
+    function assignStagingPositions(looseCells) {
+      const W = window.innerWidth, H = window.innerHeight;
+      const cx = W / 2, cy = H / 2;
+      const radius = Math.min(W, H) * 0.45 * SETTINGS.stagingRadius;
+      const n = looseCells.length;
+      for (let i = 0; i < n; i++) {
+        const angle = (i / n) * Math.PI * 2 + 0.3;
+        const jitter = (hash(i + 17) - 0.5) * 0.4;
+        const r = radius * (0.92 + jitter * 0.1);
+        const x = cx + Math.cos(angle + jitter) * r;
+        const y = cy + Math.sin(angle + jitter) * r;
+        looseCells[i].staging = {
+          x, y,
+          ampX: 5 + hash(i + 3) * 4,
+          ampY: 5 + hash(i + 7) * 4,
+          freqX: 0.12 + hash(i + 11) * 0.06,
+          freqY: 0.10 + hash(i + 13) * 0.06,
+          phaseX: hash(i + 19) * Math.PI * 2,
+          phaseY: hash(i + 23) * Math.PI * 2,
+        };
+      }
+    }
+
+    function hash(i) {
+      const s = Math.sin(i * 12.9898 + 78.233) * 43758.5453;
+      return s - Math.floor(s);
+    }
+
+    function createTileCard(cell) {
+      if (!cell.card) return;
+      const { canvas: full, clipPts } = cell.card;
+      const cropped = croppedTileCanvas(cell.card);
+      const card = document.createElement('div');
+      card.className = 'tile-card';
+      card.style.width = cropped.canvas.width + 'px';
+      card.style.height = cropped.canvas.height + 'px';
+      card.appendChild(cropped.canvas);
+
+      const rotateBtn = document.createElement('button');
+      rotateBtn.className = 'rotate-handle';
+      rotateBtn.innerHTML = '&#8635;';
+      rotateBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        cell.rotation = (cell.rotation + 90) % 360;
+      });
+      card.appendChild(rotateBtn);
+
+      tilesLayer.appendChild(card);
+      cell.cardEl = card;
+      cell.cropped = cropped;
+      positionCard(cell, cell.staging.x, cell.staging.y);
+    }
+
+    function positionCard(cell, x, y, extraScale = 1) {
+      const el = cell.cardEl;
+      if (!el) return;
+      const w = cell.cropped.canvas.width, h = cell.cropped.canvas.height;
+      const tx = x - w / 2;
+      const ty = y - h / 2;
+      el.style.transform = `translate(${tx}px, ${ty}px) rotate(${cell.rotation}deg) scale(${extraScale})`;
+    }
+
+    // ===== Camera orbit on background =====
+    const webglEl = document.getElementById('webgl');
+    webglEl.addEventListener('pointerdown', (e) => {
+      if (e.target !== webglEl) return;
+      orbitActive = true;
+      lastPointer = { x: e.clientX, y: e.clientY };
+      webglEl.setPointerCapture(e.pointerId);
+    });
+    webglEl.addEventListener('pointermove', (e) => {
+      if (!orbitActive) return;
+      const dx = e.clientX - lastPointer.x;
+      const dy = e.clientY - lastPointer.y;
+      lastPointer = { x: e.clientX, y: e.clientY };
+      cameraYaw   += dx * 0.004;
+      cameraPitch += dy * 0.004;
+      cameraPitch = Math.max(-1.2, Math.min(1.2, cameraPitch));
+    });
+    webglEl.addEventListener('pointerup', (e) => {
+      orbitActive = false;
+      try { webglEl.releasePointerCapture(e.pointerId); } catch {}
+    });
+
+    // ===== Settings wiring =====
+    const settingsBtn = document.getElementById('settings-btn');
+    const settingsDrawer = document.getElementById('settings-drawer');
+    const closeSettingsBtn = document.getElementById('close-settings-btn');
+    settingsBtn.addEventListener('click', () => settingsDrawer.classList.toggle('open'));
+    closeSettingsBtn.addEventListener('click', () => settingsDrawer.classList.remove('open'));
+    document.getElementById('reset-btn').addEventListener('click', () => {
+      stage = 1;
+      document.getElementById('stage-pill').textContent = 'STAGE 1 / 2';
+      clearLooseTiles();
+      uploadOverlay.style.display = 'flex';
+      uploadOverlay.style.opacity = '1';
+    });
+    document.getElementById('rebuild-btn').addEventListener('click', () => {
+      if (panoramaTexture) {
+        stage = 1;
+        document.getElementById('stage-pill').textContent = 'STAGE 1 / 2';
+        buildPuzzle();
+      }
+    });
+
+    // Build the settings body from a declarative spec.
+    const SETTINGS_SPEC = [
+      { key: 'tileCount', label: 'Tile count', type: 'range', min: 30, max: 100, step: 1, rebuild: true },
+      { key: 'zone1Size', label: 'Zone 1 size', type: 'range', min: 3, max: 14, step: 1, rebuild: true },
+      { key: 'zone2Size', label: 'Zone 2 size', type: 'range', min: 4, max: 22, step: 1, rebuild: true },
+      { key: 'snapPull',  label: 'Snap pull (px)', type: 'range', min: 20, max: 200, step: 2 },
+      { key: 'snapCommit', label: 'Snap commit (px)', type: 'range', min: 8, max: 80, step: 1 },
+      { key: 'fogOpacity', label: 'Fog opacity', type: 'range', min: 0.3, max: 1.0, step: 0.02,
+        live: (v) => cells.forEach(c => {
+          if (c.state === 'hidden' && c.mesh.material.uniforms)
+            c.mesh.material.uniforms.uOpacity.value = v;
+        }) },
+      { key: 'desat', label: 'Loose desaturation', type: 'range', min: 0, max: 1, step: 0.02,
+        live: (v) => document.documentElement.style.setProperty('--desat', v) },
+      { key: 'seamOpacity', label: 'Seam opacity', type: 'range', min: 0, max: 0.8, step: 0.02,
+        live: (v) => setSeamOpacity(v) },
+      { key: 'stagingRadius', label: 'Staging radius', type: 'range', min: 0.7, max: 1.3, step: 0.02,
+        live: () => relaxStagingPositions() },
+      { key: 'rotationEnabled', label: 'Rotation enabled', type: 'toggle' },
+      { key: 'rotationCount', label: 'Rotation count (zone 2)', type: 'range', min: 0, max: 6, step: 1 },
+      { key: 'sound', label: 'Snap sound', type: 'toggle' },
+      { key: 'debug', label: 'Debug outlines', type: 'toggle',
+        live: (v) => setSeamOpacity(v ? 0.7 : SETTINGS.seamOpacity) },
+    ];
+
+    function renderSettings() {
+      const host = document.getElementById('settings-body');
+      host.innerHTML = '';
+      for (const spec of SETTINGS_SPEC) {
+        const row = document.createElement('div');
+        row.className = 'setting';
+        const lab = document.createElement('label');
+        lab.textContent = spec.label + (spec.rebuild ? '  ·  rebuild' : '');
+        row.appendChild(lab);
+        if (spec.type === 'range') {
+          const val = document.createElement('span');
+          val.className = 'val';
+          val.textContent = fmt(SETTINGS[spec.key], spec.step);
+          row.appendChild(val);
+          const input = document.createElement('input');
+          input.type = 'range';
+          input.min = spec.min; input.max = spec.max; input.step = spec.step;
+          input.value = SETTINGS[spec.key];
+          input.addEventListener('input', () => {
+            const v = Number(input.value);
+            SETTINGS[spec.key] = v;
+            val.textContent = fmt(v, spec.step);
+            if (spec.live) spec.live(v);
+          });
+          row.appendChild(input);
+        } else if (spec.type === 'toggle') {
+          const wrap = document.createElement('span');
+          wrap.className = 'toggle';
+          const input = document.createElement('input');
+          input.type = 'checkbox';
+          input.checked = !!SETTINGS[spec.key];
+          input.addEventListener('change', () => {
+            SETTINGS[spec.key] = input.checked;
+            if (spec.live) spec.live(input.checked);
+          });
+          wrap.appendChild(input);
+          row.appendChild(wrap);
+        }
+        host.appendChild(row);
+      }
+    }
+    function fmt(v, step) {
+      if (step >= 1) return String(Math.round(v));
+      return Number(v).toFixed(step < 0.05 ? 2 : 1);
+    }
+    renderSettings();
+
+    // Sync CSS desat var with settings default.
+    document.documentElement.style.setProperty('--desat', SETTINGS.desat);
+
+    // Boot.
+    initScene();
+  </script>
+</body>
+</html>
