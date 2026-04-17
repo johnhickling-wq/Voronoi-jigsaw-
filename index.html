@@ -474,8 +474,11 @@
             const p10 = slerpUnit(pAt0, pBt0, s1);
             const p01 = slerpUnit(pAt1, pBt1, s0);
             const p11 = slerpUnit(pAt1, pBt1, s1);
-            pushTri(positions, uvs, R_, p00, p10, p11);
-            pushTri(positions, uvs, R_, p00, p11, p01);
+            // Winding flipped so triangles face outward from the sphere:
+            // CCW from outside view ⇒ normal points outward ⇒ BackSide
+            // rendering (from the inside camera) accepts them.
+            pushTri(positions, uvs, R_, p00, p11, p10);
+            pushTri(positions, uvs, R_, p00, p01, p11);
           }
         }
       }
