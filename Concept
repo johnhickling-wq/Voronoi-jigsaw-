@@ -1,0 +1,178 @@
+Build a polished mobile-first prototype for a calm, premium puzzle game where the player restores a fractured Skybox AI 3D scene by dragging irregular tiles into place.
+
+This should feel elegant, tactile, minimal, and satisfying. Do not make it feel like a cheap jigsaw game. The visual mood should be calm and premium.
+
+CORE CONCEPT
+- The source image is a Skybox AI-generated 3D scene, typically a panoramic or immersive-looking landscape image with strong depth and atmosphere.
+- At the start of the prototype, prompt the user to upload an image so they can test the system using their own Skybox AI scene.
+- After upload, display that uploaded scene as though it has been fractured into large, irregular Voronoi-style tiles.
+- One tile begins already correctly placed and acts as the anchor.
+- A small central playable area is initially available.
+- The rest of the scene is hidden behind a soft atmospheric fog / veil.
+- The player drags loose tiles into their correct places.
+- When a tile is placed correctly, it snaps in satisfyingly.
+- Loose tiles should appear desaturated / grayscale / muted.
+- When a tile is correctly placed, full colour returns to that tile.
+- When the initial area is completed, the fog recedes to reveal another connected area of the scene.
+- The scene should gradually be restored in elegant stages.
+
+IMPORTANT DESIGN GOALS
+- Must feel calm and premium, not busy or arcade-like.
+- Minimal UI.
+- No loud effects, no intrusive scoring, no clutter.
+- Focus on tactile drag feel, snap feel, visual clarity, and graceful transitions.
+- Think “fractured world being restored”, not “mobile jigsaw”.
+
+PLATFORM / FORMAT
+- Mobile portrait layout.
+- Single-page HTML/CSS/JS prototype.
+- Touch-first controls, but mouse should also work on desktop.
+- No frameworks required unless absolutely necessary. Plain JS preferred for portability.
+- Use canvas if that is the cleanest way to render and manipulate the scene and puzzle pieces.
+
+UPLOAD FLOW
+- On first load, show an elegant, minimal upload screen asking the user to upload a Skybox AI scene image for demo purposes.
+- This should feel on-brand with the calm premium tone, not like a default browser file input dumped on screen.
+- After image upload, initialize the puzzle using the uploaded image.
+- Include a fallback demo image option as well, in case the user wants to test without uploading.
+
+VISUAL STYLE
+- The uploaded scene should be treated as a dramatic 3D-looking world image with depth, atmosphere, horizon, clouds, landforms, etc.
+- The scene should be divided into irregular but readable Voronoi-like cells.
+- Tile boundaries should be subtle and elegant, not bright debug-looking overlays.
+- Use thin, soft, low-contrast seam lines.
+- Overall presentation should feel restrained and tasteful.
+
+PUZZLE STRUCTURE
+- Use a modest number of large irregular tiles, enough to prove the concept without becoming messy.
+- Start with a small central zone only, roughly equivalent to an easy 4x4-area puzzle section in complexity.
+- One tile inside this zone should already be locked in place and shown in full colour.
+- The other tiles for that zone should be staged around the edges of the playable area in a neat, calm layout.
+- Do not scatter pieces randomly all over the screen in a chaotic way.
+- After completing the first zone, reveal a second connected zone by receding the fog.
+- It is enough for this prototype to have 2 reveal stages.
+
+FOG / VEIL MECHANIC
+- The unrevealed parts of the image should be hidden behind a soft fog / veil / haze rather than a hard black mask.
+- The fog should feel atmospheric and premium.
+- When a zone is completed, the fog should retreat smoothly and elegantly.
+- The reveal should preserve a sense of discovery and reduce visual overwhelm.
+
+COLOUR RESTORATION MECHANIC
+- Loose movable tiles should appear in a muted grayscale or desaturated state.
+- Correctly placed tiles should regain full colour on snap.
+- The already-anchored starting tile should begin in full colour.
+- This mechanic is important and should be central to the feel of restoration.
+
+SNAP / PLACEMENT FEEL
+- Correct placement should feel excellent.
+- Add a gentle magnetic attraction when a tile is near the correct location.
+- Snap threshold should be forgiving enough to feel smooth on mobile.
+- When a piece snaps in:
+  - animate a subtle settle into place
+  - restore full colour
+  - optionally add a soft glow or brief polish effect
+- Incorrect placement should simply leave the piece movable, without harsh punishment.
+
+ROTATION
+- Include rotation as an optional mechanic in the prototype, but keep it elegant and restrained.
+- Do NOT use fiddly free rotation.
+- Use 90-degree step rotation only.
+- Best interaction: when a loose tile is selected, show a subtle rotate button/control nearby.
+- For this prototype, only some tiles in the second revealed zone need rotation.
+- The first zone should be solvable without rotation so the opening feels calm and approachable.
+
+READABILITY / USABILITY
+- Irregular pieces must remain large and readable on a phone screen.
+- Avoid tiny fragments.
+- Prioritize landmark readability and clean interaction.
+- Keep the number of active loose tiles manageable.
+- The prototype should feel easy to understand and pleasant to interact with.
+
+SCENE / TILE QUALITY LOGIC
+- If possible, include simple logic to avoid reveal zones made mostly of bland, similar tiles.
+- For example, do not let the first zone be mostly empty sky or low-detail gradients.
+- A simple heuristic is enough:
+  - prefer tiles with stronger contrast / edges / landmarks
+  - ensure each revealed zone has some visual variety
+- This does not need to be perfect, but should be considered in the structure.
+
+SETTINGS / CONTROL PANEL
+- Add a subtle settings icon in the interface.
+- Tapping it should open a discreet control panel for tweaking important gameplay and presentation variables.
+- This is mainly for developer/demo tuning, so it does not need to feel player-facing or gamey, but it should still look clean and restrained.
+- Suggested tweakable controls:
+  - number of tiles / partition density
+  - snap strength
+  - snap distance threshold
+  - fog opacity
+  - reveal zone size
+  - number of reveal stages
+  - amount of desaturation on loose tiles
+  - whether rotation is enabled
+  - how many tiles in stage 2 require rotation
+  - seam visibility
+  - tile staging distance from board
+  - optional debug outlines / labels toggle
+- The settings panel should be hidden by default behind the subtle icon.
+- Changes should update the prototype live where practical, or rebuild the puzzle when needed.
+
+UI
+- Keep UI extremely minimal.
+- Include:
+  - subtle settings icon
+  - small reset button if useful
+  - elegant upload prompt on first load
+- Small debug toggle is fine if useful, but hidden inside settings.
+- No score counters, timers, stars, currency, or arcade-style overlays.
+- A tiny stage indicator is acceptable if tasteful.
+
+AUDIO
+- Optional only if quick to implement.
+- If included, keep it very subtle:
+  - soft click / ceramic / glassy settle sound on correct placement
+- No loud arcade sounds.
+
+ANIMATION / POLISH
+- Use gentle easing.
+- Tiles should lift slightly or feel subtly elevated when dragged.
+- Snapping should feel soft but confident.
+- Fog reveal should feel smooth and deliberate.
+- Completed sections should feel satisfying without fireworks.
+
+TECHNICAL APPROACH
+- Create a Voronoi-like partition of the uploaded image into irregular cells.
+- Each tile should be draggable independently.
+- Each tile should know its home position and current rotation.
+- Home slots should remain in the board.
+- Board area should remain visually elegant even when tiles are missing.
+- Use clipping/masking so each piece displays its own section of the source image.
+- Desaturated loose-tile rendering and full-colour placed rendering should be supported cleanly.
+- It is okay to fake Voronoi pieces with precomputed polygons or a simplified irregular partition if that makes the prototype more reliable.
+
+MVP SUCCESS CRITERIA
+The prototype is successful if:
+1. It immediately feels calm and visually distinctive.
+2. The upload flow works smoothly and makes it easy to test with a Skybox AI scene.
+3. Dragging and snapping pieces feels satisfying.
+4. The grayscale-to-colour restoration feels rewarding.
+5. The fog reveal structure makes the puzzle feel inviting rather than cluttered.
+6. The irregular fractured-tile look feels elegant and readable on mobile.
+7. The settings panel makes it easy to tune the experience.
+
+PLEASE DELIVER
+- A single self-contained HTML file if possible.
+- Clean, commented code.
+- Sensible structure so the prototype can be expanded later.
+- Make the prototype actually pleasant to interact with, not just technically functional.
+
+PRIORITIES IN ORDER
+1. Feel
+2. Readability
+3. Smooth upload flow
+4. Snap satisfaction
+5. Fog reveal elegance
+6. Useful settings panel
+7. Rotation as a secondary mechanic
+
+If tradeoffs are needed, simplify features rather than compromising the calm premium feel.
