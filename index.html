@@ -852,6 +852,7 @@
       });
     }
     function loadSceneFromCanvas(canvas) {
+      showLoader(true);
       const tex = new THREE.CanvasTexture(canvas);
       finishTextureLoad(tex);
     }
@@ -863,7 +864,17 @@
       tex.needsUpdate = true;
       panoramaTexture = tex;
       dismissOverlay();
-      buildPuzzle();
+      // Defer heavy work one frame so the loader paints before we block.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        try {
+          buildPuzzle();
+        } catch (err) {
+          console.error(err);
+          toast('Could not build the puzzle — check the console.');
+        } finally {
+          showLoader(false);
+        }
+      }));
     }
     function dismissOverlay() {
       uploadOverlay.style.opacity = '0';
