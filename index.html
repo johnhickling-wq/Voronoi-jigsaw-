@@ -235,7 +235,7 @@
   <div id="tiles-layer"></div>
 
   <div id="hud">
-    <div id="stage-pill">STAGE 1 / 2</div>
+    <div id="stage-pill">STAGE 1</div>
     <div>
       <button class="icon-btn" id="reset-btn" title="Reset">
         <svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66" stroke-linecap="round"/><path d="M20 4v5h-5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -276,15 +276,14 @@
     // ===== Settings =====
     const SETTINGS = {
       tileCount: 56,
-      snapPull: 90,
+      snapPull: 200,
       snapCommit: 34,
       fogOpacity: 0.92,
-      zone1Size: 7,
-      zone2Size: 12,
+      zoneSize: 5,
       desat: 1.0,
       rotationEnabled: true,
       rotationCount: 3,
-      seamOpacity: 0.22,
+      seamOpacity: 0,
       stagingRadius: 1.1,
       debug: false,
       sound: false,
@@ -297,7 +296,8 @@
     let cells = [];            // cell objects
     let adjacency = [];        // cell index -> neighbour indices
     const R = 500;
-    let cameraYaw = 0, cameraPitch = 0, cameraFov = 75;
+    let cameraYaw = 0, cameraPitch = 0, cameraFov = 90;
+    const FOV_MIN = 35, FOV_MAX = 110;
     let orbitActive = false, lastPointer = null;
     let stage = 1;
     const tilesLayer = document.getElementById('tiles-layer');
@@ -762,63 +762,66 @@
     }
 
     // ===== Zone completion / reveal =====
+    function updateStagePill() {
+      const el = document.getElementById('stage-pill');
+      if (stage > totalZones) el.textContent = 'COMPLETE';
+      else el.textContent = `STAGE ${stage} / ${totalZones}`;
+    }
+
     function checkZoneComplete() {
-      if (stage === 1) {
-        const done = cells.filter(c => c.zone === 1).every(c => c.state === 'placed');
-        if (done) beginStage2();
-      } else if (stage === 2) {
-        const done = cells.filter(c => c.zone === 2).every(c => c.state === 'placed');
-        if (done) {
-          toast('Scene restored.', 3400);
-          document.getElementById('stage-pill').textContent = 'COMPLETE';
-        }
+      const zoneCells = cells.filter(c => c.zone === stage);
+      if (!zoneCells.length || !zoneCells.every(c => c.state === 'placed')) return;
+      if (stage < totalZones) {
+        revealStage(stage + 1);
+      } else {
+        stage++;
+        updateStagePill();
+        toast('Scene restored.', 3400);
       }
     }
 
-    function beginStage2() {
-      stage = 2;
-      document.getElementById('stage-pill').textContent = 'STAGE 2 / 2';
-      toast('Zone 1 restored.', 2400);
+    function revealStage(n) {
+      stage = n;
+      updateStagePill();
+      toast(`Stage ${n - 1} restored.`, 2400);
 
-      // Fog retreat on zone 2 cells: animate opacity to a hint state, then
-      // mark as slot + spawn loose cards.
-      const zone2 = cells.filter(c => c.zone === 2);
+      const zoneCells = cells.filter(c => c.zone === n);
       const dur = 900;
       const start = performance.now();
       function step(now) {
         const t = Math.min(1, (now - start) / dur);
         const e = easeInOutCubic(t);
-        for (const c of zone2) {
+        for (const c of zoneCells) {
           if (c.mesh.material && c.mesh.material.uniforms) {
             c.mesh.material.uniforms.uOpacity.value = SETTINGS.fogOpacity * (1 - e) + 0.55 * e;
             c.mesh.material.uniforms.uMix.value = e * 0.08;
           }
         }
         if (t < 1) requestAnimationFrame(step);
-        else onStage2Ready();
+        else onStageReady(zoneCells, n);
       }
       requestAnimationFrame(step);
+    }
 
-      function onStage2Ready() {
-        for (const c of zone2) {
-          c.state = 'loose';
-          const thin = makeFogMaterial({ opacity: 0.55, tint: [0.38, 0.40, 0.44], showHint: true });
-          c.mesh.material = thin;
-          c.fogMat = thin;
-        }
-        // Random rotation on some zone 2 cells.
-        if (SETTINGS.rotationEnabled) {
-          const pool = zone2.slice();
-          shuffle(pool);
-          const rotateCount = Math.min(SETTINGS.rotationCount, pool.length);
-          for (let i = 0; i < rotateCount; i++) {
-            pool[i].rotation = 90 * (1 + Math.floor(Math.random() * 3));
-            pool[i].canRotate = true;
-          }
-        }
-        assignStagingPositions(zone2);
-        for (const c of zone2) createTileCard(c);
+    function onStageReady(zoneCells, n) {
+      for (const c of zoneCells) {
+        c.state = 'loose';
+        const thin = makeFogMaterial({ opacity: 0.55, tint: [0.38, 0.40, 0.44], showHint: true });
+        c.mesh.material = thin;
+        c.fogMat = thin;
       }
+      // Stages ≥ 2 get a subset with 90° rotations.
+      if (n >= 2 && SETTINGS.rotationEnabled) {
+        const pool = zoneCells.slice();
+        shuffle(pool);
+        const rotateCount = Math.min(SETTINGS.rotationCount, pool.length);
+        for (let i = 0; i < rotateCount; i++) {
+          pool[i].rotation = 90 * (1 + Math.floor(Math.random() * 3));
+          pool[i].canRotate = true;
+        }
+      }
+      assignStagingPositions(zoneCells);
+      for (const c of zoneCells) createTileCard(c);
     }
 
     function shuffle(a) {
@@ -1255,6 +1258,8 @@
       applyInitialCellStates();
       aimCameraAtAnchor();
       spawnLooseTiles();
+      stage = 1;
+      updateStagePill();
     }
 
     // ===== Content interest (Sobel on preview) =====
@@ -1294,56 +1299,68 @@
     }
 
     // ===== Zone assignment =====
+    // Assigns every cell to a zone index (1, 2, 3, …). Zones grow as blobs
+    // from the anchor, with each zone targeting SETTINGS.zoneSize cells.
+    let totalZones = 0;
     function assignZones() {
-      const z1n = SETTINGS.zone1Size;
-      const z2n = SETTINGS.zone2Size;
+      const size = Math.max(2, SETTINGS.zoneSize);
 
-      // Default view direction: look towards -Z (into the scene).
+      // Reset.
+      for (const c of cells) { c.zone = -1; c.isAnchor = false; }
+
+      // Pick anchor: highest-interest cell near the default view direction.
       const viewDir = [0, 0, -1];
-      // Seed candidates: cells within 60° of viewDir, sorted by interest desc.
       const cosLim = Math.cos(60 * Math.PI / 180);
-      const seedCandidates = cells
+      const pool = cells
         .map(c => ({ c, cos: dot(c.centre, viewDir), s: c.interest }))
         .filter(o => o.cos > cosLim);
-      // Fallback: if no cells fall within the cone, use all cells.
-      const seedPool = seedCandidates.length ? seedCandidates : cells.map(c => ({ c, s: c.interest, cos: dot(c.centre, viewDir) }));
+      const seedPool = pool.length ? pool : cells.map(c => ({ c, s: c.interest, cos: dot(c.centre, viewDir) }));
       seedPool.sort((a, b) => b.s - a.s);
       const anchor = seedPool[0].c;
-
-      // Grow zone 1 by BFS, preferring high-interest neighbours.
-      const zone1 = growZone([anchor.index], z1n);
-      // Grow zone 2 from the frontier.
-      const zone2 = growZone(zone1.slice(), z1n + z2n, zone1);
-
-      // Mark cells.
-      for (const c of cells) { c.zone = -1; }
-      for (const idx of zone1) cells[idx].zone = 1;
-      for (const idx of zone2) if (cells[idx].zone < 0) cells[idx].zone = 2;
-      anchor.zone = 1;
       anchor.isAnchor = true;
-    }
 
-    function growZone(initialSet, target, excludeSet) {
-      const zone = new Set(initialSet);
-      const exclude = new Set(excludeSet || []);
-      while (zone.size < target) {
-        // Collect frontier (neighbours not in zone nor excluded).
-        const candidates = [];
-        for (const i of zone) {
+      // Fill zones sequentially: zone 1 starts at anchor, next zones grow
+      // from the existing frontier. Blob score = 2 × (# neighbours already
+      // in current zone) + 0.3 × interest, so concavities fill in first.
+      const assigned = new Set([anchor.index]);
+      anchor.zone = 1;
+      let zoneIdx = 1;
+      let currentZone = new Set([anchor.index]);
+      let filled = 1;
+
+      while (assigned.size < cells.length) {
+        if (filled >= size) {
+          zoneIdx++;
+          currentZone = new Set();
+          filled = 0;
+        }
+        // Frontier = neighbours of anything currently assigned, not yet used.
+        const candidates = new Set();
+        for (const i of assigned) {
           for (const j of adjacency[i]) {
-            if (!zone.has(j) && !exclude.has(j)) candidates.push(j);
+            if (!assigned.has(j)) candidates.add(j);
           }
         }
-        if (!candidates.length) break;
-        // Pick the candidate with highest interest (dedupe by max).
-        const best = new Map();
+        if (!candidates.size) break;
+        // Score each candidate: favour cells adjacent to many cells in the
+        // CURRENT zone (or anchor), then the assigned set, then interest.
+        let bestJ = -1, bestScore = -Infinity;
         for (const j of candidates) {
-          if (!best.has(j)) best.set(j, cells[j].interest);
+          let cz = 0, ca = 0;
+          for (const k of adjacency[j]) {
+            if (currentZone.has(k)) cz++;
+            else if (assigned.has(k)) ca++;
+          }
+          const score = 2 * cz + 0.8 * ca + 0.3 * (cells[j].interest || 0);
+          if (score > bestScore) { bestScore = score; bestJ = j; }
         }
-        const pick = [...best.entries()].sort((a, b) => b[1] - a[1])[0][0];
-        zone.add(pick);
+        if (bestJ < 0) break;
+        assigned.add(bestJ);
+        currentZone.add(bestJ);
+        cells[bestJ].zone = zoneIdx;
+        filled++;
       }
-      return [...zone];
+      totalZones = zoneIdx;
     }
 
     function applyInitialCellStates() {
@@ -1442,27 +1459,80 @@
       el.style.transform = `translate(${tx}px, ${ty}px) rotate(${cell.rotation}deg) scale(${extraScale})`;
     }
 
-    // ===== Camera orbit on background =====
+    // ===== Camera orbit + pinch/wheel zoom =====
     const webglEl = document.getElementById('webgl');
+    const activePointers = new Map(); // pointerId -> {x, y}
+    let pinchPrevDist = null;
+
+    function setFov(fov) {
+      cameraFov = Math.max(FOV_MIN, Math.min(FOV_MAX, fov));
+      if (camera) {
+        camera.fov = cameraFov;
+        camera.updateProjectionMatrix();
+      }
+    }
+
     webglEl.addEventListener('pointerdown', (e) => {
       if (e.target !== webglEl) return;
-      orbitActive = true;
-      lastPointer = { x: e.clientX, y: e.clientY };
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       webglEl.setPointerCapture(e.pointerId);
+      if (activePointers.size === 1) {
+        orbitActive = true;
+        lastPointer = { x: e.clientX, y: e.clientY };
+      } else if (activePointers.size === 2) {
+        // Entering pinch — suspend orbit.
+        orbitActive = false;
+        const [a, b] = [...activePointers.values()];
+        pinchPrevDist = Math.hypot(a.x - b.x, a.y - b.y);
+      }
     });
+
     webglEl.addEventListener('pointermove', (e) => {
+      if (!activePointers.has(e.pointerId)) return;
+      activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (activePointers.size >= 2) {
+        const [a, b] = [...activePointers.values()];
+        const dist = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinchPrevDist) {
+          // Zoom: shrinking fingers ⇒ widen fov (zoom out).
+          const ratio = pinchPrevDist / dist;
+          setFov(cameraFov * ratio);
+        }
+        pinchPrevDist = dist;
+        return;
+      }
       if (!orbitActive) return;
       const dx = e.clientX - lastPointer.x;
       const dy = e.clientY - lastPointer.y;
       lastPointer = { x: e.clientX, y: e.clientY };
-      cameraYaw   += dx * 0.004;
-      cameraPitch += dy * 0.004;
+      // Scale sensitivity with fov so wider fov doesn't feel overly twitchy.
+      const s = (cameraFov / 90) * 0.004;
+      cameraYaw   += dx * s;
+      cameraPitch += dy * s;
       cameraPitch = Math.max(-1.2, Math.min(1.2, cameraPitch));
     });
-    webglEl.addEventListener('pointerup', (e) => {
-      orbitActive = false;
+
+    function endPointer(e) {
+      if (!activePointers.has(e.pointerId)) return;
+      activePointers.delete(e.pointerId);
       try { webglEl.releasePointerCapture(e.pointerId); } catch {}
-    });
+      if (activePointers.size < 2) pinchPrevDist = null;
+      if (activePointers.size === 0) orbitActive = false;
+      else if (activePointers.size === 1) {
+        const [p] = [...activePointers.values()];
+        lastPointer = { x: p.x, y: p.y };
+        orbitActive = true;
+      }
+    }
+    webglEl.addEventListener('pointerup', endPointer);
+    webglEl.addEventListener('pointercancel', endPointer);
+
+    webglEl.addEventListener('wheel', (e) => {
+      // Desktop mouse wheel + trackpad pinch-as-wheel. deltaY > 0 = zoom out.
+      e.preventDefault();
+      setFov(cameraFov + e.deltaY * 0.05);
+    }, { passive: false });
 
     // ===== Settings wiring =====
     const settingsBtn = document.getElementById('settings-btn');
@@ -1472,7 +1542,7 @@
     closeSettingsBtn.addEventListener('click', () => settingsDrawer.classList.remove('open'));
     document.getElementById('reset-btn').addEventListener('click', () => {
       stage = 1;
-      document.getElementById('stage-pill').textContent = 'STAGE 1 / 2';
+      document.getElementById('stage-pill').textContent = 'STAGE 1';
       clearLooseTiles();
       uploadOverlay.style.display = 'flex';
       uploadOverlay.style.opacity = '1';
@@ -1480,7 +1550,7 @@
     document.getElementById('rebuild-btn').addEventListener('click', () => {
       if (panoramaTexture) {
         stage = 1;
-        document.getElementById('stage-pill').textContent = 'STAGE 1 / 2';
+        document.getElementById('stage-pill').textContent = 'STAGE 1';
         buildPuzzle();
       }
     });
@@ -1488,9 +1558,8 @@
     // Build the settings body from a declarative spec.
     const SETTINGS_SPEC = [
       { key: 'tileCount', label: 'Tile count', type: 'range', min: 30, max: 100, step: 1, rebuild: true },
-      { key: 'zone1Size', label: 'Zone 1 size', type: 'range', min: 3, max: 14, step: 1, rebuild: true },
-      { key: 'zone2Size', label: 'Zone 2 size', type: 'range', min: 4, max: 22, step: 1, rebuild: true },
-      { key: 'snapPull',  label: 'Snap pull (px)', type: 'range', min: 20, max: 200, step: 2 },
+      { key: 'zoneSize', label: 'Zone size (tiles per stage)', type: 'range', min: 3, max: 12, step: 1, rebuild: true },
+      { key: 'snapPull',  label: 'Snap pull (px)', type: 'range', min: 20, max: 400, step: 2 },
       { key: 'snapCommit', label: 'Snap commit (px)', type: 'range', min: 8, max: 80, step: 1 },
       { key: 'fogOpacity', label: 'Fog opacity', type: 'range', min: 0.3, max: 1.0, step: 0.02,
         live: (v) => cells.forEach(c => {
